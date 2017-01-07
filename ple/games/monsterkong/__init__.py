@@ -35,9 +35,9 @@ class MonsterKong(PyGameWrapper):
             self, self.width, self.height, actions=actions)
 
         self.rewards = {
-            "positive": 5,
-            "win": 50,
-            "negative": -25,
+            "positive": 50,
+            "win": 1000,
+            "negative": -250,
             "tick": 0
         }
 

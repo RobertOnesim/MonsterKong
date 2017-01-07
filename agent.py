@@ -19,9 +19,9 @@ from ple import PLE
 ACTIONS = 5 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
 OBSERVATION = 3200. # timesteps to observe before training
-EXPLORE = 3000000. # frames over which to anneal epsilon
-FINAL_EPSILON = 0.0001 # final value of epsilon
-INITIAL_EPSILON = 0.1 # starting value of epsilon
+EXPLORE = 1000000. # frames over which to anneal epsilon
+FINAL_EPSILON = 0 # final value of epsilon
+INITIAL_EPSILON = 1 # starting value of epsilon
 REPLAY_MEMORY = 50000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
 FRAME_PER_ACTION = 1
@@ -45,7 +45,7 @@ def buildmodel():
     model.add(Flatten())
     model.add(Dense(512, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
     model.add(Activation('relu'))
-    model.add(Dense(2, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
+    model.add(Dense(5, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
 
     adam = Adam(lr=1e-6)
     model.compile(loss='mse', optimizer=adam)
@@ -63,8 +63,6 @@ def trainNetwork(model,args):
     # get the first state by doing nothing and preprocess the image to 80x80x4
     do_nothing = np.zeros(ACTIONS)
     do_nothing[0] = 1
-    r_0 = p._getReward()
-    terminal = p.game_over()
     x_t = p.getScreenRGB()
     # x_t, r_0, terminal = game.frame_step(do_nothing)
 
@@ -94,22 +92,18 @@ def trainNetwork(model,args):
     while (True):
         loss = 0
         Q_sa = 0
-        action_index = 0
+        action_index = 1
         r_t = 0
-        a_t = np.zeros([ACTIONS])
         #choose an action epsilon greedy
         if t % FRAME_PER_ACTION == 0:
-            if random.random() <= epsilon:
+            if random.random() <= epsilon or t < OBSERVE:
                 print("----------Random Action----------")
                 action_index = random.randrange(ACTIONS)
-                a_t[action_index] = 1
             else:
                 q = model.predict(s_t)       #input a stack of 4 images, get the prediction
                 max_Q = np.argmax(q)
                 action_index = max_Q
-                a_t[max_Q] = 1
 
-        p.act(actions[action_index])
         #We reduced the epsilon gradually
         if epsilon > FINAL_EPSILON and t > OBSERVE:
             epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
@@ -118,9 +112,13 @@ def trainNetwork(model,args):
 
         #x_t1_colored, r_t, terminal = game_state.frame_step(a_t)
 
-        r_t = p._getReward()
+        r_t = p.act(actions[action_index])
         terminal = p.game_over()
         x_t1_colored = p.getScreenRGB()
+
+        if terminal:
+            r_t = -1000
+            p.reset_game()
 
         x_t1 = skimage.color.rgb2gray(x_t1_colored)
         x_t1 = skimage.transform.resize(x_t1,(80,80))
