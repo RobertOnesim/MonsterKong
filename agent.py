@@ -52,6 +52,58 @@ def buildmodel():
     print("We finish building the model")
     return model
 
+
+ladderMaxDist = 180.0
+ladderValue = 1.5
+
+playerStartY = 441.0
+levelHeight = 75.0
+levelFullValue = 4.5
+levelClimbValue = levelFullValue - ladderValue
+
+coinMaxDist = 80.0
+coinWeightY = 4.0
+coinValue = 4.0
+
+def getDetailedScore(game, screen):
+    extraPoints = 0.0
+    playerPos = game.Players[0].getPosition()
+
+    # reward superior levels
+    deltaY = playerStartY - playerPos[1]
+    if game.Players[0].isJumping and not game.Players[0].onLadder:
+        deltaY -= deltaY % levelHeight
+    extraPoints += (deltaY // levelHeight) * levelFullValue
+    extraPoints += (deltaY % levelHeight) / levelHeight * levelClimbValue
+
+    # reward ladder proximity
+    bestReward = 0.0
+    if game.Players[0].onLadder:
+        bestReward = ladderValue
+    else:
+        bestPos = game.Ladders[0].getPosition()
+        for ladder in game.Ladders:
+            pos = ladder.getPosition()
+            if pos[1] >= playerPos[1] - 1:
+                if pos[1] <= bestPos[1] and abs(playerPos[0] - pos[0]) < abs(playerPos[0] - bestPos[0]):
+                    bestPos = pos
+        bestReward = (ladderMaxDist - abs(playerPos[0] - bestPos[0])) / ladderMaxDist * ladderValue
+        if bestReward < 0:
+            bestReward = 0
+    extraPoints += bestReward
+
+    # reward coin proximity
+    bestReward = 0.0
+    for coin in game.Coins:
+        pos = coin.getPosition()
+        dist = abs(pos[0] - playerPos[0]) + abs(pos[1] - playerPos[1]) * coinWeightY
+        reward = (coinMaxDist - dist) / coinMaxDist * coinValue
+        if reward > bestReward:
+            bestReward = reward
+    extraPoints += bestReward
+
+    return extraPoints
+
 def trainNetwork(model,args):
     # open up a game state to communicate with ple env
     game = MonsterKong()
@@ -115,6 +167,7 @@ def trainNetwork(model,args):
         r_t = p.act(actions[action_index])
         terminal = p.game_over()
         x_t1_colored = p.getScreenRGB()
+        r_t += getDetailedScore(game.newGame, x_t1_colored)
 
         if terminal:
             r_t = -1000
