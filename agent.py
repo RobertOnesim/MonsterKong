@@ -19,9 +19,9 @@ from ple import PLE
 ACTIONS = 5 # number of valid actions
 GAMMA = 0.99 # decay rate of past observations
 OBSERVATION = 3200. # timesteps to observe before training
-EXPLORE = 1000000. # frames over which to anneal epsilon
-FINAL_EPSILON = 0 # final value of epsilon
-INITIAL_EPSILON = 1 # starting value of epsilon
+EXPLORE = 3000000. # frames over which to anneal epsilon
+FINAL_EPSILON = 0.0001 # final value of epsilon
+INITIAL_EPSILON = 0.2 # starting value of epsilon
 REPLAY_MEMORY = 50000 # number of previous transitions to remember
 BATCH = 32 # size of minibatch
 FRAME_PER_ACTION = 1
@@ -150,7 +150,7 @@ def trainNetwork(model,args):
         r_t = 0
         #choose an action epsilon greedy
         if t % FRAME_PER_ACTION == 0:
-            if random.random() <= epsilon:
+            if random.random() <= epsilon or t <= OBSERVE:
                 print("----------Random Action----------")
                 action_index = random.randrange(ACTIONS)
             else:
@@ -160,8 +160,9 @@ def trainNetwork(model,args):
 
         #We reduced the epsilon gradually
         if epsilon > FINAL_EPSILON and t > OBSERVE:
-            epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
-
+        	epsilon -= 1/EXPLORE   
+	 #epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
+		
         #run the selected action and observed next state and reward
 
         #x_t1_colored, r_t, terminal = game_state.frame_step(a_t)
@@ -236,9 +237,11 @@ def trainNetwork(model,args):
         else:
             state = "train"
 
-        print("TIMESTEP", t, "/ STATE", state, \
-            "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, \
-            "/ Q_MAX " , np.max(Q_sa), "/ Loss ", loss)
+        # print("TIMESTEP", t, "/ STATE", state, \
+        #    "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, \
+        #    "/ Q_MAX " , np.max(Q_sa), "/ Loss ", loss)
+
+        print("TIMESTEP", t, "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t)
 
     print("Episode finished!")
     print("************************")
