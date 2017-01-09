@@ -54,16 +54,16 @@ def buildmodel():
 
 
 ladderMaxDist = 180.0
-ladderValue = 1.5
+ladderValue = 2.5
 
 playerStartY = 441.0
 levelHeight = 75.0
-levelFullValue = 4.5
+levelFullValue = 7.5
 levelClimbValue = levelFullValue - ladderValue
 
 coinMaxDist = 80.0
-coinWeightY = 4.0
-coinValue = 4.0
+coinWeightY = 5.0
+coinValue = 3.0
 
 def getDetailedScore(game, screen):
     extraPoints = 0.0
