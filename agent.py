@@ -115,7 +115,9 @@ def trainNetwork(model,args):
     # get the first state by doing nothing and preprocess the image to 80x80x4
     do_nothing = np.zeros(ACTIONS)
     do_nothing[0] = 1
+    r_0 = p.act(p.NOOP)
     x_t = p.getScreenRGB()
+    terminal = p.game_over()
     # x_t, r_0, terminal = game.frame_step(do_nothing)
 
     x_t = skimage.color.rgb2gray(x_t)
@@ -148,7 +150,7 @@ def trainNetwork(model,args):
         r_t = 0
         #choose an action epsilon greedy
         if t % FRAME_PER_ACTION == 0:
-            if random.random() <= epsilon or t < OBSERVE:
+            if random.random() <= epsilon:
                 print("----------Random Action----------")
                 action_index = random.randrange(ACTIONS)
             else:
