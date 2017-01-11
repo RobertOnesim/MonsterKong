@@ -18,10 +18,9 @@ from ple import PLE
 
 class MonsterKongPlayer:
 
-    ACTIONS = 5             # number of valid actions
     GAMMA = 0.99            # decay rate of past observations
-    OBSERVATION = 3200.     # timesteps to observe before training
-    EXPLORE = 3000000.      # frames over which to anneal epsilon
+    EXPLORE = 3200.     # timesteps to observe before training
+    TRAIN = 3000000.      # frames over which to anneal epsilon
     EPSILON_INITIAL = 0.2   # starting value of epsilon
     EPSILON_FINAL = 0.0001  # final value of epsilon
     SECOND_BEST = 0.25      # chance to pick the second best move
@@ -42,6 +41,9 @@ class MonsterKongPlayer:
     COIN_DIST_MAX = 80.     # the maximum distance that will award points for coin proximity
     COIN_WEIGHT_Y = 5.      # the weight of the y axis in distance calculation
     COIN_VALUE = 3.0        # the maximum value of coin proximity
+
+    ACTIONS = 5             # number of valid actions
+
 
     def __init__(self):
         self.buildModel()
@@ -65,7 +67,7 @@ class MonsterKongPlayer:
         self.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
 
 
-    def startNetwork(self, observe, epsilon):
+    def startNetwork(self, explore, epsilon):
 
         replayDeque = deque()
 
@@ -85,7 +87,7 @@ class MonsterKongPlayer:
         while (True):
 
             #choose an action epsilon greedy
-            if random.random() <= epsilon or frameIndex <= observe:
+            if random.random() <= epsilon or frameIndex <= explore:
                 actionIndex = random.randrange(self.ACTIONS)
             else:
                 prediction = self.model.predict(imageList)
@@ -96,17 +98,18 @@ class MonsterKongPlayer:
                     actionIndex = np.argmax(prediction)
 
             #We reduced the epsilon gradually
-            if epsilon > self.EPSILON_FINAL and frameIndex > observe:
-                epsilon -= 1/self.EXPLORE
+            if epsilon > self.EPSILON_FINAL and frameIndex > explore:
+                epsilon -= 1/self.TRAIN
             #epsilon -= (EPSILON_INITIAL - EPSILON_FINAL) / EXPLORE
 
             #run the selected action and observed next state and reward
             actionScore = self.p.act(actions[actionIndex])
-            imageColored = self.p.getScreenRGB()
             actionScore += self.getDetailedScore(imageColored)
 
-            terminal = self.p.game_over()
-            if terminal:
+            imageColored = self.p.getScreenRGB()
+
+            gameOver = self.p.game_over()
+            if gameOver:
                 actionScore = -1000
                 self.p.reset_game()
 
@@ -118,12 +121,12 @@ class MonsterKongPlayer:
             imageListNext = np.append(imageNormalised, imageList[:, :3, :, :], axis=1)
 
             # store the transition in replayDeque
-            replayDeque.append((imageList, actionIndex, actionScore, imageListNext, terminal))
+            replayDeque.append((imageList, actionIndex, actionScore, imageListNext, gameOver))
             if len(replayDeque) > self.REPLAY_MEMORY:
                 replayDeque.popleft()
 
             #only train if done observing
-            if frameIndex > observe:
+            if frameIndex > explore:
                 #sample a minibatch to train on
                 minibatch = random.sample(replayDeque, self.BATCH)
 
@@ -132,22 +135,22 @@ class MonsterKongPlayer:
 
                 #Now we do the experience replay
                 for i in range(0, len(minibatch)):
-                    state_t = minibatch[i][0]
-                    action_t = minibatch[i][1]   #This is action index
-                    reward_t = minibatch[i][2]
-                    state_t1 = minibatch[i][3]
-                    terminal = minibatch[i][4]
+                    oldState = minibatch[i][0]
+                    action = minibatch[i][1]   #This is action index
+                    reward = minibatch[i][2]
+                    newState = minibatch[i][3]
+                    gameOver = minibatch[i][4]
                     # if terminated, only equals reward
 
-                    inputs[i:i + 1] = state_t    #I saved down imageList
+                    inputs[i:i + 1] = oldState    #I saved down imageList
 
-                    targets[i] = self.model.predict(state_t)  # Hitting each buttom probability
-                    prediction = self.model.predict(state_t1)
+                    targets[i] = self.model.predict(oldState)  # Hitting each buttom probability
+                    prediction = self.model.predict(newState)
 
-                    if terminal:
-                        targets[i, action_t] = reward_t
+                    if gameOver:
+                        targets[i, action] = reward
                     else:
-                        targets[i, action_t] = reward_t + self.GAMMA * np.max(prediction)
+                        targets[i, action] = reward + self.GAMMA * np.max(prediction)
 
                 self.model.train_on_batch(inputs, targets)
 
@@ -208,10 +211,9 @@ def main():
     if sys.argv[1] == 'play':
         player.model.load_weights("model.h5")
         player.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
-        player.startNetwork(999999999, player.EPSILON_FINAL)
-
+        player.startNetwork(9999999999, player.EPSILON_FINAL)
     elif sys.argv[1] == 'train':
-        player.startNetwork(player.OBSERVATION, player.EPSILON_INITIAL)
+        player.startNetwork(player.EXPLORE, player.EPSILON_INITIAL)
     else:
         print('Please specify what would you like the player to do')
 
