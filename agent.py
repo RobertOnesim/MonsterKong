@@ -206,10 +206,11 @@ class MonsterKongPlayer:
 def main():
     player = MonsterKongPlayer()
     if sys.argv[1] == 'play':
-        player.startNetwork(999999999, player.EPSILON_FINAL)
-    elif sys.argv[1] == 'train':
-        player.model.load_weights("self.model.h5")
+        player.model.load_weights("model.h5")
         player.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
+        player.startNetwork(999999999, player.EPSILON_FINAL)
+
+    elif sys.argv[1] == 'train':
         player.startNetwork(player.OBSERVATION, player.EPSILON_INITIAL)
     else:
         print('Please specify what would you like the player to do')
