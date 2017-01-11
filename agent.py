@@ -4,8 +4,8 @@ import random
 import numpy as np
 from collections import deque
 
-import skimage as skimage
-from skimage import transform, color, exposure
+import PIL
+from PIL import Image
 
 from keras.initializations import normal
 from keras.layers import Convolution2D, Activation, Flatten, Dense
@@ -74,9 +74,7 @@ class MonsterKongPlayer:
         self.p.act(self.p.NOOP)
         imageColored = self.p.getScreenRGB()
 
-        imageNormalised = skimage.color.rgb2gray(imageColored)
-        imageNormalised = skimage.transform.resize(imageNormalised, (self.PIXELCOUNT_X, self.PIXELCOUNT_Y))
-        imageNormalised = skimage.exposure.rescale_intensity(imageNormalised, out_range=(0,255))
+        imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
 
         imageList = np.stack((imageNormalised, imageNormalised, imageNormalised, imageNormalised), axis=0)
 
@@ -113,9 +111,7 @@ class MonsterKongPlayer:
                 actionScore = -1000
                 self.p.reset_game()
 
-            imageNormalised = skimage.color.rgb2gray(imageColored)
-            imageNormalised = skimage.transform.resize(imageNormalised,(80,80))
-            imageNormalised = skimage.exposure.rescale_intensity(imageNormalised, out_range=(0, 255))
+            imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
 
             imageNormalised = imageNormalised.reshape(1, 1, imageNormalised.shape[0], imageNormalised.shape[1])
             imageListNext = np.append(imageNormalised, imageList[:, :3, :, :], axis=1)
@@ -211,7 +207,8 @@ def main():
     if sys.argv[1] == 'play':
         player.model.load_weights("model.h5")
         player.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
-        player.startNetwork(9999999999, player.EPSILON_FINAL)
+        player.startNetwork(999999999, player.EPSILON_FINAL)
+
     elif sys.argv[1] == 'train':
         player.startNetwork(player.EXPLORE, player.EPSILON_INITIAL)
     else:
