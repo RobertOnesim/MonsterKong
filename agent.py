@@ -1,10 +1,9 @@
-import argparse
+import sys
 import json
 import random
 import numpy as np
 from collections import deque
 
-import argparse
 import skimage as skimage
 from skimage import transform, color, exposure
 
@@ -16,245 +15,205 @@ from keras.optimizers import Adam
 from  ple.games.monsterkong import MonsterKong
 from ple import PLE
 
-ACTIONS = 5 # number of valid actions
-GAMMA = 0.99 # decay rate of past observations
-OBSERVATION = 3200. # timesteps to observe before training
-EXPLORE = 3000000. # frames over which to anneal epsilon
-FINAL_EPSILON = 0.0001 # final value of epsilon
-INITIAL_EPSILON = 0.2 # starting value of epsilon
-REPLAY_MEMORY = 50000 # number of previous transitions to remember
-BATCH = 32 # size of minibatch
-FRAME_PER_ACTION = 1
 
-img_rows , img_cols = 80, 80
-#Convert image into Black and white
-img_channels = 4 #We stack 4 frames
+class MonsterKongPlayer:
 
-def buildmodel():
-    print("Now we build the model")
-    model = Sequential()
-    model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name),
-                            border_mode='same', input_shape=(img_channels, img_rows, img_cols)))
-    model.add(Activation('relu'))
-    model.add(Convolution2D(64, 4, 4, subsample=(2, 2), init=lambda shape, name: normal(shape, scale=0.01, name=name),
-                            border_mode='same'))
-    model.add(Activation('relu'))
-    model.add(Convolution2D(64, 3, 3, subsample=(1, 1), init=lambda shape, name: normal(shape, scale=0.01, name=name),
-                            border_mode='same'))
-    model.add(Activation('relu'))
-    model.add(Flatten())
-    model.add(Dense(512, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
-    model.add(Activation('relu'))
-    model.add(Dense(5, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
+    ACTIONS = 5             # number of valid actions
+    GAMMA = 0.99            # decay rate of past observations
+    OBSERVATION = 3200.     # timesteps to observe before training
+    EXPLORE = 3000000.      # frames over which to anneal epsilon
+    EPSILON_INITIAL = 0.2   # starting value of epsilon
+    EPSILON_FINAL = 0.0001  # final value of epsilon
+    SECOND_BEST = 0.25      # chance to pick the second best move
+    REPLAY_MEMORY = 50000   # number of previous transitions to remember
+    BATCH = 32              # size of minibatch
 
-    adam = Adam(lr=1e-6)
-    model.compile(loss='mse', optimizer=adam)
-    print("We finish building the model")
-    return model
+    PIXELCOUNT_X = 80       # resize width
+    PIXELCOUNT_Y = 80       # resize height
+
+    LADDER_DIST_MAX = 180.  # the maximum distance that will award points for ladder proximity
+    LADDER_VALUE = 2.5      # the maximum value of ladder proximity
+
+    PLAYER_START_Y = 441.   # player starting position on y axis
+    LEVEL_HEIGHT = 75.      # pixel distance between levels
+    LEVEL_VALUE_FULL = 7.5  # value awarded for each level
+    LEVEL_VALUE_CLIMB = LEVEL_VALUE_FULL - LADDER_VALUE # partial value awarded while climbing
+
+    COIN_DIST_MAX = 80.     # the maximum distance that will award points for coin proximity
+    COIN_WEIGHT_Y = 5.      # the weight of the y axis in distance calculation
+    COIN_VALUE = 3.0        # the maximum value of coin proximity
+
+    def __init__(self):
+        self.buildModel()
+        self.game = MonsterKong()
+        self.p = PLE(self.game, fps=30, display_screen=True)
 
 
-ladderMaxDist = 180.0
-ladderValue = 2.5
+    def buildModel(self):
+        self.model = Sequential()
+        self.model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same', input_shape=(4, self.PIXELCOUNT_X, self.PIXELCOUNT_Y)))
+        self.model.add(Activation('relu'))
+        self.model.add(Convolution2D(64, 4, 4, subsample=(2, 2), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same'))
+        self.model.add(Activation('relu'))
+        self.model.add(Convolution2D(64, 3, 3, subsample=(1, 1), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same'))
+        self.model.add(Activation('relu'))
+        self.model.add(Flatten())
+        self.model.add(Dense(512, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
+        self.model.add(Activation('relu'))
+        self.model.add(Dense(5, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
 
-playerStartY = 441.0
-levelHeight = 75.0
-levelFullValue = 7.5
-levelClimbValue = levelFullValue - ladderValue
+        self.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
 
-coinMaxDist = 80.0
-coinWeightY = 5.0
-coinValue = 3.0
 
-def getDetailedScore(game, screen):
-    extraPoints = 0.0
-    playerPos = game.Players[0].getPosition()
+    def startNetwork(self, observe, epsilon):
 
-    # reward superior levels
-    deltaY = playerStartY - playerPos[1]
-    if game.Players[0].isJumping and not game.Players[0].onLadder:
-        deltaY -= deltaY % levelHeight
-    extraPoints += (deltaY // levelHeight) * levelFullValue
-    extraPoints += (deltaY % levelHeight) / levelHeight * levelClimbValue
+        replayDeque = deque()
 
-    # reward ladder proximity
-    bestReward = 0.0
-    if game.Players[0].onLadder:
-        bestReward = ladderValue
-    else:
-        bestPos = game.Ladders[0].getPosition()
-        for ladder in game.Ladders:
-            pos = ladder.getPosition()
-            if pos[1] >= playerPos[1] - 1:
-                if pos[1] <= bestPos[1] and abs(playerPos[0] - pos[0]) < abs(playerPos[0] - bestPos[0]):
-                    bestPos = pos
-        bestReward = (ladderMaxDist - abs(playerPos[0] - bestPos[0])) / ladderMaxDist * ladderValue
-        if bestReward < 0:
-            bestReward = 0
-    extraPoints += bestReward
+        self.p.act(self.p.NOOP)
+        imageColored = self.p.getScreenRGB()
 
-    # reward coin proximity
-    bestReward = 0.0
-    for coin in game.Coins:
-        pos = coin.getPosition()
-        dist = abs(pos[0] - playerPos[0]) + abs(pos[1] - playerPos[1]) * coinWeightY
-        reward = (coinMaxDist - dist) / coinMaxDist * coinValue
-        if reward > bestReward:
-            bestReward = reward
-    extraPoints += bestReward
+        imageNormalised = skimage.color.rgb2gray(imageColored)
+        imageNormalised = skimage.transform.resize(imageNormalised, (self.PIXELCOUNT_X, self.PIXELCOUNT_Y))
+        imageNormalised = skimage.exposure.rescale_intensity(imageNormalised, out_range=(0,255))
 
-    return extraPoints
+        imageList = np.stack((imageNormalised, imageNormalised, imageNormalised, imageNormalised), axis=0)
 
-def trainNetwork(model,args):
-    # open up a game state to communicate with ple env
-    game = MonsterKong()
-    p = PLE(game, fps=30, display_screen=True)
+        actions = self.p.getActionSet()
+        imageList = imageList.reshape(1, imageList.shape[0], imageList.shape[1], imageList.shape[2])
 
-    # store the previous observations in replay memory
-    D = deque()
+        frameIndex = 0
+        while (True):
 
-    # get the first state by doing nothing and preprocess the image to 80x80x4
-    do_nothing = np.zeros(ACTIONS)
-    do_nothing[0] = 1
-    r_0 = p.act(p.NOOP)
-    x_t = p.getScreenRGB()
-    terminal = p.game_over()
-    # x_t, r_0, terminal = game.frame_step(do_nothing)
-
-    x_t = skimage.color.rgb2gray(x_t)
-    x_t = skimage.transform.resize(x_t,(80,80))
-    x_t = skimage.exposure.rescale_intensity(x_t,out_range=(0,255))
-
-    s_t = np.stack((x_t, x_t, x_t, x_t), axis=0)
-
-    actions = p.getActionSet()
-    #In Keras, need to reshape
-    s_t = s_t.reshape(1, s_t.shape[0], s_t.shape[1], s_t.shape[2])
-
-    if args['mode'] == 'Run':
-        OBSERVE = 999999999    #We keep observe, never train
-        epsilon = FINAL_EPSILON
-        print ("Now we load weight")
-        model.load_weights("model.h5")
-        adam = Adam(lr=1e-6)
-        model.compile(loss='mse',optimizer=adam)
-        print ("Weight load successfully")
-    else:                       #We go to training mode
-        OBSERVE = OBSERVATION
-        epsilon = INITIAL_EPSILON
-
-    t = 0
-    while (True):
-        loss = 0
-        Q_sa = 0
-        action_index = 1
-        r_t = 0
-        #choose an action epsilon greedy
-        if t % FRAME_PER_ACTION == 0:
-            if random.random() <= epsilon or t <= OBSERVE:
-                print("----------Random Action----------")
-                action_index = random.randrange(ACTIONS)
+            #choose an action epsilon greedy
+            if random.random() <= epsilon or frameIndex <= observe:
+                actionIndex = random.randrange(self.ACTIONS)
             else:
-                q = model.predict(s_t)       #input a stack of 4 images, get the prediction
-                max_Q = np.argmax(q)
-                action_index = max_Q
+                prediction = self.model.predict(imageList)
+                actionIndex = np.argmax(prediction)
+                # pick the second best move
+                if random.random() <= self.SECOND_BEST:
+                    prediction[actionIndex] = 0
+                    actionIndex = np.argmax(prediction)
 
-        #We reduced the epsilon gradually
-        if epsilon > FINAL_EPSILON and t > OBSERVE:
-        	epsilon -= 1/EXPLORE   
-	 #epsilon -= (INITIAL_EPSILON - FINAL_EPSILON) / EXPLORE
-		
-        #run the selected action and observed next state and reward
+            #We reduced the epsilon gradually
+            if epsilon > self.EPSILON_FINAL and frameIndex > observe:
+                epsilon -= 1/self.EXPLORE
+            #epsilon -= (EPSILON_INITIAL - EPSILON_FINAL) / EXPLORE
 
-        #x_t1_colored, r_t, terminal = game_state.frame_step(a_t)
+            #run the selected action and observed next state and reward
+            actionScore = self.p.act(actions[actionIndex])
+            imageColored = self.p.getScreenRGB()
+            actionScore += self.getDetailedScore(imageColored)
 
-        r_t = p.act(actions[action_index])
-        terminal = p.game_over()
-        x_t1_colored = p.getScreenRGB()
-        r_t += getDetailedScore(game.newGame, x_t1_colored)
+            terminal = self.p.game_over()
+            if terminal:
+                actionScore = -1000
+                self.p.reset_game()
 
-        if terminal:
-            r_t = -1000
-            p.reset_game()
+            imageNormalised = skimage.color.rgb2gray(imageColored)
+            imageNormalised = skimage.transform.resize(imageNormalised,(80,80))
+            imageNormalised = skimage.exposure.rescale_intensity(imageNormalised, out_range=(0, 255))
 
-        x_t1 = skimage.color.rgb2gray(x_t1_colored)
-        x_t1 = skimage.transform.resize(x_t1,(80,80))
-        x_t1 = skimage.exposure.rescale_intensity(x_t1, out_range=(0, 255))
+            imageNormalised = imageNormalised.reshape(1, 1, imageNormalised.shape[0], imageNormalised.shape[1])
+            imageListNext = np.append(imageNormalised, imageList[:, :3, :, :], axis=1)
 
-        x_t1 = x_t1.reshape(1, 1, x_t1.shape[0], x_t1.shape[1])
-        s_t1 = np.append(x_t1, s_t[:, :3, :, :], axis=1)
+            # store the transition in replayDeque
+            replayDeque.append((imageList, actionIndex, actionScore, imageListNext, terminal))
+            if len(replayDeque) > self.REPLAY_MEMORY:
+                replayDeque.popleft()
 
-        # store the transition in D
-        D.append((s_t, action_index, r_t, s_t1, terminal))
-        if len(D) > REPLAY_MEMORY:
-            D.popleft()
+            #only train if done observing
+            if frameIndex > observe:
+                #sample a minibatch to train on
+                minibatch = random.sample(replayDeque, self.BATCH)
 
-        #only train if done observing
-        if t > OBSERVE:
-            #sample a minibatch to train on
-            minibatch = random.sample(D, BATCH)
+                inputs = np.zeros((self.BATCH, imageList.shape[1], imageList.shape[2], imageList.shape[3]))
+                targets = np.zeros((inputs.shape[0], self.ACTIONS))
 
-            inputs = np.zeros((BATCH, s_t.shape[1], s_t.shape[2], s_t.shape[3]))   #32, 80, 80, 4
-            targets = np.zeros((inputs.shape[0], ACTIONS))                         #32, 2
+                #Now we do the experience replay
+                for i in range(0, len(minibatch)):
+                    state_t = minibatch[i][0]
+                    action_t = minibatch[i][1]   #This is action index
+                    reward_t = minibatch[i][2]
+                    state_t1 = minibatch[i][3]
+                    terminal = minibatch[i][4]
+                    # if terminated, only equals reward
 
-            #Now we do the experience replay
-            for i in range(0, len(minibatch)):
-                state_t = minibatch[i][0]
-                action_t = minibatch[i][1]   #This is action index
-                reward_t = minibatch[i][2]
-                state_t1 = minibatch[i][3]
-                terminal = minibatch[i][4]
-                # if terminated, only equals reward
+                    inputs[i:i + 1] = state_t    #I saved down imageList
 
-                inputs[i:i + 1] = state_t    #I saved down s_t
+                    targets[i] = self.model.predict(state_t)  # Hitting each buttom probability
+                    prediction = self.model.predict(state_t1)
 
-                targets[i] = model.predict(state_t)  # Hitting each buttom probability
-                Q_sa = model.predict(state_t1)
+                    if terminal:
+                        targets[i, action_t] = reward_t
+                    else:
+                        targets[i, action_t] = reward_t + self.GAMMA * np.max(prediction)
 
-                if terminal:
-                    targets[i, action_t] = reward_t
-                else:
-                    targets[i, action_t] = reward_t + GAMMA * np.max(Q_sa)
+                self.model.train_on_batch(inputs, targets)
 
-            # targets2 = normalize(targets)
-            loss += model.train_on_batch(inputs, targets)
+            imageList = imageListNext
+            frameIndex = frameIndex + 1
 
-        s_t = s_t1
-        t = t + 1
+            print("FRAME", frameIndex, "/ EPSILON", epsilon, "/ ACTION", actionIndex, "/ REWARD", actionScore)
 
-        # save progress every 10000 iterations
-        if t % 100 == 0:
-            print("Now we save model")
-            model.save_weights("model.h5", overwrite=True)
-            with open("model.json", "w") as outfile:
-                json.dump(model.to_json(), outfile)
+            # save progress
+            if frameIndex % 1000 == 0:
+                print("Saving Model")
+                self.model.save_weights("model.h5", overwrite=True)
+                with open("model.json", "w") as outfile:
+                    json.dump(self.model.to_json(), outfile)
 
-        # print info
-        state = ""
-        if t <= OBSERVE:
-            state = "observe"
-        elif t > OBSERVE and t <= OBSERVE + EXPLORE:
-            state = "explore"
+
+    def getDetailedScore(self, screen):
+        extraPoints = 0.0
+        playerPos = self.game.Players[0].getPosition()
+
+        # reward superior levels
+        deltaY = self.PLAYER_START_Y - playerPos[1]
+        if self.game.Players[0].isJumping and not self.game.Players[0].onLadder:
+            deltaY -= deltaY % self.LEVEL_HEIGHT
+        extraPoints += (deltaY // self.LEVEL_HEIGHT) * self.LEVEL_VALUE_FULL
+        extraPoints += (deltaY % self.LEVEL_HEIGHT) / self.LEVEL_HEIGHT * self.LEVEL_VALUE_CLIMB
+
+        # reward ladder proximity
+        bestReward = 0.0
+        if self.game.Players[0].onLadder:
+            bestReward = self.LADDER_VALUE
         else:
-            state = "train"
+            bestPos = self.game.Ladders[0].getPosition()
+            for ladder in self.game.Ladders:
+                pos = ladder.getPosition()
+                if pos[1] >= playerPos[1] - 1:
+                    if pos[1] <= bestPos[1] and abs(playerPos[0] - pos[0]) < abs(playerPos[0] - bestPos[0]):
+                        bestPos = pos
+            bestReward = (self.LADDER_DIST_MAX - abs(playerPos[0] - bestPos[0])) / self.LADDER_DIST_MAX * self.LADDER_VALUE
+            if bestReward < 0:
+                bestReward = 0
+        extraPoints += bestReward
 
-        # print("TIMESTEP", t, "/ STATE", state, \
-        #    "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t, \
-        #    "/ Q_MAX " , np.max(Q_sa), "/ Loss ", loss)
+        # reward coin proximity
+        bestReward = 0.0
+        for coin in self.game.Coins:
+            pos = coin.getPosition()
+            dist = abs(pos[0] - playerPos[0]) + abs(pos[1] - playerPos[1]) * self.COIN_WEIGHT_Y
+            reward = (self.COIN_DIST_MAX - dist) / self.COIN_DIST_MAX * self.COIN_VALUE
+            if reward > bestReward:
+                bestReward = reward
+        extraPoints += bestReward
 
-        print("TIMESTEP", t, "/ EPSILON", epsilon, "/ ACTION", action_index, "/ REWARD", r_t)
+        return extraPoints
 
-    print("Episode finished!")
-    print("************************")
-
-def playGame(args):
-    model = buildmodel()
-    trainNetwork(model,args)
 
 def main():
-    parser = argparse.ArgumentParser(description='Description of your program')
-    parser.add_argument('-m','--mode', help='Train / Run', required=True)
-    args = vars(parser.parse_args())
-    playGame(args)
+    player = MonsterKongPlayer()
+    if sys.argv[1] == 'train':
+        player.startNetwork(999999999, player.EPSILON_FINAL)
+    elif sys.argv[1] == 'play':
+        player.model.load_weights("self.model.h5")
+        player.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
+        player.startNetwork(player.OBSERVATION, player.EPSILON_INITIAL)
+    else:
+        print('Please specify what would you like the player to do')
 
 if __name__ == "__main__":
     main()
