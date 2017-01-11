@@ -4,7 +4,6 @@ import random
 import numpy as np
 from collections import deque
 
-import PIL
 from PIL import Image
 
 from keras.initializations import normal
@@ -18,17 +17,12 @@ from ple import PLE
 
 class MonsterKongPlayer:
 
-    GAMMA = 0.99            # decay rate of past observations
-    EXPLORE = 3200.     # timesteps to observe before training
-    TRAIN = 3000000.      # frames over which to anneal epsilon
-    EPSILON_INITIAL = 0.2   # starting value of epsilon
-    EPSILON_FINAL = 0.0001  # final value of epsilon
+    BATCH = 20              # size of miniBatch
+    GAMMA = 0.99
+    EXPLORE = 3200          # frames to observe before training
+    TRAIN = 1000000         # frames to train and adjust epsilon
     SECOND_BEST = 0.25      # chance to pick the second best move
-    REPLAY_MEMORY = 20000   # number of previous transitions to remember
-    BATCH = 20              # size of minibatch
-
-    PIXELCOUNT_X = 80       # resize width
-    PIXELCOUNT_Y = 80       # resize height
+    REPLAY_MEMORY = 20000   # save previous transitions
 
     LADDER_DIST_MAX = 180.  # the maximum distance that will award points for ladder proximity
     LADDER_VALUE = 2.5      # the maximum value of ladder proximity
@@ -42,7 +36,9 @@ class MonsterKongPlayer:
     COIN_WEIGHT_Y = 5.      # the weight of the y axis in distance calculation
     COIN_VALUE = 3.0        # the maximum value of coin proximity
 
-    ACTIONS = 5             # number of valid actions
+    ACTIONS = 5             # valid moves
+    EPSILON_INITIAL = 0.2   # starting value of epsilon
+    EPSILON_FINAL = 0.0001  # final value of epsilon
 
 
     def __init__(self):
@@ -52,37 +48,48 @@ class MonsterKongPlayer:
 
 
     def buildModel(self):
+        # build model using Keras
         self.model = Sequential()
-        self.model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same', input_shape=(4, self.PIXELCOUNT_X, self.PIXELCOUNT_Y)))
+        # input layer 4x80x80 image and 3 convolution hidden layers with activation function "ReLu" f(x) = max(0,x)
+        self.model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same', input_shape=(4, 80, 80)))
         self.model.add(Activation('relu'))
         self.model.add(Convolution2D(64, 4, 4, subsample=(2, 2), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same'))
         self.model.add(Activation('relu'))
         self.model.add(Convolution2D(64, 3, 3, subsample=(1, 1), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same'))
         self.model.add(Activation('relu'))
         self.model.add(Flatten())
+        # last hidden fully connected layer
         self.model.add(Dense(512, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
         self.model.add(Activation('relu'))
+        # output layer -  1 neuron for each valid move (5)
         self.model.add(Dense(5, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
 
+        # using ADAM (Adaptive Moment Estimation)
         self.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
 
+    def saveModel(self):
+        # saving the model
+        self.model.save_weights("model.h5", overwrite=True)
+        with open("model.json", "w") as outfile:
+            json.dump(self.model.to_json(), outfile)
 
     def startNetwork(self, explore, epsilon):
 
         replayDeque = deque()
 
+        # get first image and resize in a 80x80 image and group 4 of this image
         self.p.act(self.p.NOOP)
         imageColored = self.p.getScreenRGB()
-
         imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
-
         imageList = np.stack((imageNormalised, imageNormalised, imageNormalised, imageNormalised), axis=0)
-
-        actions = self.p.getActionSet()
+        # Keras input 1x4x80x80 so we need to reshape the imageList
         imageList = imageList.reshape(1, imageList.shape[0], imageList.shape[1], imageList.shape[2])
 
+        # get the action set for this game
+        actions = self.p.getActionSet()
+
         frameIndex = 0
-        while (True):
+        while (frameIndex < self.TRAIN):
 
             #choose an action epsilon greedy
             if random.random() <= epsilon or frameIndex <= explore:
@@ -95,24 +102,23 @@ class MonsterKongPlayer:
                     prediction[actionIndex] = 0
                     actionIndex = np.argmax(prediction)
 
-            #We reduced the epsilon gradually
+            # We reduced the epsilon gradually
             if epsilon > self.EPSILON_FINAL and frameIndex > explore:
                 epsilon -= 1/self.TRAIN
-            #epsilon -= (EPSILON_INITIAL - EPSILON_FINAL) / EXPLORE
 
             #run the selected action and observed next state and reward
             actionScore = self.p.act(actions[actionIndex])
             actionScore += self.getDetailedScore(imageColored)
-
             imageColored = self.p.getScreenRGB()
 
+            # check if the game is over - yes (reset the game and give a negative reward)
             gameOver = self.p.game_over()
             if gameOver:
                 actionScore = -1000
                 self.p.reset_game()
 
+            # resize the current state image
             imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
-
             imageNormalised = imageNormalised.reshape(1, 1, imageNormalised.shape[0], imageNormalised.shape[1])
             imageListNext = np.append(imageNormalised, imageList[:, :3, :, :], axis=1)
 
@@ -123,45 +129,39 @@ class MonsterKongPlayer:
 
             #only train if done observing
             if frameIndex > explore:
-                #sample a minibatch to train on
+                #sample a miniBatch to train on
                 minibatch = random.sample(replayDeque, self.BATCH)
 
                 inputs = np.zeros((self.BATCH, imageList.shape[1], imageList.shape[2], imageList.shape[3]))
                 targets = np.zeros((inputs.shape[0], self.ACTIONS))
 
                 #Now we do the experience replay
-                for i in range(0, len(minibatch)):
-                    oldState = minibatch[i][0]
-                    action = minibatch[i][1]   #This is action index
-                    reward = minibatch[i][2]
-                    newState = minibatch[i][3]
-                    gameOver = minibatch[i][4]
-                    # if terminated, only equals reward
+                for s in range(0, len(minibatch)):
+                    oldState = minibatch[s][0] # old state
+                    action = minibatch[s][1]   # move index
+                    reward = minibatch[s][2]   # reward
+                    newState = minibatch[s][3] # new state
+                    gameOver = minibatch[s][4] # flag game over
 
-                    inputs[i:i + 1] = oldState    #I saved down imageList
-
-                    targets[i] = self.model.predict(oldState)  # Hitting each buttom probability
-                    prediction = self.model.predict(newState)
+                    inputs[s:s + 1] = oldState    # saved imageList
+                    targets[s] = self.model.predict(oldState)
+                    newQval = self.model.predict(newState) # Q(s,a)
 
                     if gameOver:
-                        targets[i, action] = reward
+                        targets[s, action] = reward
                     else:
-                        targets[i, action] = reward + self.GAMMA * np.max(prediction)
+                        targets[s, action] = reward + self.GAMMA * np.max(newQval)
 
-                self.model.train_on_batch(inputs, targets)
+                self.model.train_on_batch(inputs, targets) # this return the loss
 
             imageList = imageListNext
             frameIndex = frameIndex + 1
 
-            print("FRAME", frameIndex, "/ EPSILON", epsilon, "/ ACTION", actionIndex, "/ REWARD", actionScore)
+            print("FRAME", frameIndex, " EPSILON", epsilon, " ACTION", actionIndex, " REWARD", actionScore)
 
-            # save progress
+            # save model
             if frameIndex % 1000 == 0:
-                print("Saving Model")
-                self.model.save_weights("model.h5", overwrite=True)
-                with open("model.json", "w") as outfile:
-                    json.dump(self.model.to_json(), outfile)
-
+                self.saveModel()
 
     def getDetailedScore(self, screen):
         extraPoints = 0.0
