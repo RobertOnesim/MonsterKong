@@ -94,9 +94,7 @@ class MonsterKongPlayer:
         imageList = imageList.reshape(1, imageList.shape[0], imageList.shape[1], imageList.shape[2])
 
         # get the action set for this game
-        ACTION_COUNT = self.p.getActionSet()
-        print (ACTION_COUNT)
-        self.p.act(None);
+        actionSet = self.p.getActionSet()
 
         frameIndex = 0
         while (frameIndex < self.TRAIN):
@@ -117,7 +115,7 @@ class MonsterKongPlayer:
                 epsilon -= 1/self.TRAIN
 
             #run the selected action and observed next state and reward
-            actionScore = self.p.act(ACTION_COUNT[actionIndex])
+            actionScore = self.p.act(actionSet[actionIndex])
             actionScore += self.getDetailedScore(imageColored)
             imageColored = self.p.getScreenRGB()
 
