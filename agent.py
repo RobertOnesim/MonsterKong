@@ -37,9 +37,13 @@ class MonsterKongPlayer:
     COIN_WEIGHT_Y = 5.      # the weight of the y axis in distance calculation
     COIN_VALUE = 3.0        # the maximum value of coin proximity
 
-    ACTIONS = 5             # valid moves
+    ACTION_COUNT = 6        # valid moves
     EPSILON_INITIAL = 0.2   # starting value of epsilon
     EPSILON_FINAL = 0.0001  # final value of epsilon
+    ACTION_NAMES = ('LEFT', 'DOWN', 'JUMP', 'UP  ', 'RGHT', 'NOOP')
+
+    IMAGE_RESIZE_WIDTH = 80 # the width of the rescaled image
+    IMAGE_RESIZE_HEIGHT =80 # the height of the rescaled image
 
 
     def __init__(self):
@@ -52,7 +56,7 @@ class MonsterKongPlayer:
         # build model using Keras
         self.model = Sequential()
         # input layer 4x80x80 image and 3 convolution hidden layers with activation function "ReLu" f(x) = max(0,x)
-        self.model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same', input_shape=(4, 80, 80)))
+        self.model.add(Convolution2D(32, 8, 8, subsample=(4, 4), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same', input_shape=(4, self.IMAGE_RESIZE_WIDTH, self.IMAGE_RESIZE_HEIGHT)))
         self.model.add(Activation('relu'))
         self.model.add(Convolution2D(64, 4, 4, subsample=(2, 2), init=lambda shape, name: normal(shape, scale=0.01, name=name), border_mode='same'))
         self.model.add(Activation('relu'))
@@ -62,8 +66,8 @@ class MonsterKongPlayer:
         # last hidden fully connected layer
         self.model.add(Dense(512, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
         self.model.add(Activation('relu'))
-        # output layer -  1 neuron for each valid move (5)
-        self.model.add(Dense(5, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
+        # output layer -  1 neuron for each valid move
+        self.model.add(Dense(self.ACTION_COUNT, init=lambda shape, name: normal(shape, scale=0.01, name=name)))
 
         # using ADAM (Adaptive Moment Estimation)
         self.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
@@ -81,20 +85,25 @@ class MonsterKongPlayer:
         # get first image and resize in a 80x80 image and group 4 of this image
         self.p.act(self.p.NOOP)
         imageColored = self.p.getScreenRGB()
-        imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
+        imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L')
+            .resize((self.IMAGE_RESIZE_WIDTH, self.IMAGE_RESIZE_HEIGHT)).getdata())\
+            .reshape((self.IMAGE_RESIZE_WIDTH, self.IMAGE_RESIZE_HEIGHT))
+
         imageList = np.stack((imageNormalised, imageNormalised, imageNormalised, imageNormalised), axis=0)
         # Keras input 1x4x80x80 so we need to reshape the imageList
         imageList = imageList.reshape(1, imageList.shape[0], imageList.shape[1], imageList.shape[2])
 
         # get the action set for this game
-        actions = self.p.getActionSet()
+        ACTION_COUNT = self.p.getActionSet()
+        print (ACTION_COUNT)
+        self.p.act(None);
 
         frameIndex = 0
         while (frameIndex < self.TRAIN):
 
             #choose an action epsilon greedy
             if random.random() <= epsilon or frameIndex <= explore:
-                actionIndex = random.randrange(self.ACTIONS)
+                actionIndex = random.randrange(self.ACTION_COUNT)
             else:
                 prediction = self.model.predict(imageList)
                 actionIndex = np.argmax(prediction)
@@ -108,7 +117,7 @@ class MonsterKongPlayer:
                 epsilon -= 1/self.TRAIN
 
             #run the selected action and observed next state and reward
-            actionScore = self.p.act(actions[actionIndex])
+            actionScore = self.p.act(ACTION_COUNT[actionIndex])
             actionScore += self.getDetailedScore(imageColored)
             imageColored = self.p.getScreenRGB()
 
@@ -119,7 +128,10 @@ class MonsterKongPlayer:
                 self.p.reset_game()
 
             # resize the current state image
-            imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L').resize((80, 80)).getdata()).reshape((80, 80))
+            imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L')
+                .resize((self.IMAGE_RESIZE_WIDTH, self.IMAGE_RESIZE_HEIGHT)).getdata()) \
+                .reshape((self.IMAGE_RESIZE_WIDTH, self.IMAGE_RESIZE_HEIGHT))
+
             imageNormalised = imageNormalised.reshape(1, 1, imageNormalised.shape[0], imageNormalised.shape[1])
             imageListNext = np.append(imageNormalised, imageList[:, :3, :, :], axis=1)
 
@@ -134,7 +146,7 @@ class MonsterKongPlayer:
                 minibatch = random.sample(replayDeque, self.BATCH)
 
                 inputs = np.zeros((self.BATCH, imageList.shape[1], imageList.shape[2], imageList.shape[3]))
-                targets = np.zeros((inputs.shape[0], self.ACTIONS))
+                targets = np.zeros((inputs.shape[0], self.ACTION_COUNT))
 
                 #Now we do the experience replay
                 for s in range(0, len(minibatch)):
@@ -158,7 +170,7 @@ class MonsterKongPlayer:
             imageList = imageListNext
             frameIndex = frameIndex + 1
 
-            print("FRAME", frameIndex, " EPSILON", epsilon, " ACTION", actionIndex, " REWARD", actionScore)
+            print("FRAME", frameIndex, " EPSILON", epsilon, " ACTION", self.ACTION_NAMES[actionIndex], " REWARD", actionScore)
 
             # save model
             if frameIndex % 1000 == 0:
