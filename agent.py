@@ -1,4 +1,5 @@
 import sys
+import os
 import json
 import random
 import numpy as np
@@ -21,7 +22,7 @@ class MonsterKongPlayer:
     GAMMA = 0.99
     EXPLORE = 3200          # frames to observe before training
     TRAIN = 1000000         # frames to train and adjust epsilon
-    SECOND_BEST = 0.25      # chance to pick the second best move
+    SECOND_BEST = 0.2       # chance to pick the second best move
     REPLAY_MEMORY = 20000   # save previous transitions
 
     LADDER_DIST_MAX = 180.  # the maximum distance that will award points for ladder proximity
@@ -99,7 +100,7 @@ class MonsterKongPlayer:
                 actionIndex = np.argmax(prediction)
                 # pick the second best move
                 if random.random() <= self.SECOND_BEST:
-                    prediction[actionIndex] = 0
+                    prediction[0][actionIndex] = -1000
                     actionIndex = np.argmax(prediction)
 
             # We reduced the epsilon gradually
@@ -164,8 +165,10 @@ class MonsterKongPlayer:
                 self.saveModel()
 
     def getDetailedScore(self, screen):
+
         extraPoints = 0.0
         playerPos = self.game.newGame.Players[0].getPosition()
+
         # reward superior levels
         deltaY = self.PLAYER_START_Y - playerPos[1]
         if self.game.newGame.Players[0].isJumping and not self.game.newGame.Players[0].onLadder:
@@ -203,14 +206,23 @@ class MonsterKongPlayer:
 
 
 def main():
+
     player = MonsterKongPlayer()
-    if sys.argv[1] == 'play':
-        player.model.load_weights("model.h5")
+
+    if len(sys.argv) != 2:
+        print('Please specify what would you like the player to do')
+
+    elif sys.argv[1] == 'play':
+        if not os.path.isfile('model.h5'):
+            print('No saved network found!')
+            sys.exit()
+        player.model.load_weights('model.h5')
         player.model.compile(loss='mse', optimizer=Adam(lr=1e-6))
         player.startNetwork(999999999, player.EPSILON_FINAL)
 
     elif sys.argv[1] == 'train':
         player.startNetwork(player.EXPLORE, player.EPSILON_INITIAL)
+
     else:
         print('Please specify what would you like the player to do')
 
