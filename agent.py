@@ -22,7 +22,7 @@ class MonsterKongPlayer:
     GAMMA = 0.99
     EXPLORE = 3200          # frames to observe before training
     TRAIN = 1000000         # frames to train and adjust epsilon
-    SECOND_BEST = 0.2       # chance to pick the second best move
+    SECOND_BEST = 0.1       # chance to pick the second best move
     REPLAY_MEMORY = 20000   # save previous transitions
 
     LADDER_DIST_MAX = 180.  # the maximum distance that will award points for ladder proximity
@@ -38,7 +38,7 @@ class MonsterKongPlayer:
     COIN_VALUE = 3.0        # the maximum value of coin proximity
 
     ACTION_COUNT = 6        # valid moves
-    EPSILON_INITIAL = 0.2   # starting value of epsilon
+    EPSILON_INITIAL = 0.25  # starting value of epsilon
     EPSILON_FINAL = 0.0001  # final value of epsilon
     ACTION_NAMES = ('LEFT', 'DOWN', 'JUMP', 'UP  ', 'RGHT', 'NOOP')
 
@@ -123,7 +123,9 @@ class MonsterKongPlayer:
             gameOver = self.p.game_over()
             if gameOver:
                 actionScore = -1000
-                self.p.reset_game()
+                # self.p.reset_game()
+                self.game = MonsterKong()
+                self.p = PLE(self.game, fps=30, display_screen=True)
 
             # resize the current state image
             imageNormalised = np.array(Image.fromarray(imageColored, 'RGB').convert('L')
